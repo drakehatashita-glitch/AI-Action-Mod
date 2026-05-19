@@ -4,10 +4,12 @@ import com.aibot.mod.AiMod;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.item.*;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.Identifier;
+import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.text.Text;
 
 import java.util.*;
 
@@ -15,18 +17,21 @@ import java.util.*;
 public class AutoSellFeature {
     private static final int INVENTORY_FULL_THRESHOLD = 32;
     private static final int SELL_COOLDOWN_TICKS = 600;
+    private static final int GUI_WAIT_TICKS = 15;
 
     private int sellCooldown = 0;
     private boolean active = true;
-
-    private static final List<String> SELL_COMMANDS = List.of(
-            "/sell all",
-            "/sell hand",
-            "/shop sell all",
-            "/sellall"
-    );
+    private boolean waitingForGui = false;
+    private int guiWaitTimer = 0;
 
     private String preferredSellCommand = "/sell all";
+
+    private static final List<String> SELL_BUTTON_NAMES = List.of(
+            "sell all", "sell items", "sell all items", "confirm sale",
+            "confirm", "yes", "accept", "ok", "sell", "click to sell",
+            "sell everything", "confirm sell", "sell all fish",
+            "sell all drops", "complete sale", "proceed"
+    );
 
     private static final Set<Item> FISH_ITEMS = new HashSet<>();
     private static final Set<Item> MOB_DROP_ITEMS = new HashSet<>();
@@ -82,6 +87,11 @@ public class AutoSellFeature {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return;
 
+        if (waitingForGui) {
+            handleGuiWait(client);
+            return;
+        }
+
         if (sellCooldown > 0) {
             sellCooldown--;
             return;
@@ -90,28 +100,100 @@ public class AutoSellFeature {
         ClientPlayerEntity player = client.player;
         int filledSlots = countFilledSlots(player);
 
-        if (filledSlots >= INVENTORY_FULL_THRESHOLD) {
-            AiMod.LOGGER.info("Inventory is full ({} slots), attempting to sell...", filledSlots);
+        if (filledSlots >= INVENTORY_FULL_THRESHOLD && hasSellableItems(player)) {
+            AiMod.LOGGER.info("Inventory full ({} slots), selling items...", filledSlots);
             attemptSell(client, player);
+        }
+    }
+
+    private void handleGuiWait(MinecraftClient client) {
+        guiWaitTimer--;
+
+        if (guiWaitTimer <= 0) {
+            waitingForGui = false;
+        }
+
+        Screen currentScreen = client.currentScreen;
+        if (currentScreen instanceof HandledScreen<?> handledScreen) {
+            AiMod.LOGGER.info("GUI detected after sell command: {}", currentScreen.getTitle().getString());
+            boolean clicked = tryClickSellButton(client, handledScreen);
+            if (!clicked) {
+                AiMod.LOGGER.info("No sell button found in GUI, closing screen.");
+                client.execute(() -> client.setScreen(null));
+            }
+            waitingForGui = false;
             sellCooldown = SELL_COOLDOWN_TICKS;
         }
     }
 
+    private boolean tryClickSellButton(MinecraftClient client, HandledScreen<?> screen) {
+        var handler = screen.getScreenHandler();
+        List<Integer> candidates = new ArrayList<>();
+
+        for (int i = 0; i < handler.slots.size(); i++) {
+            var slot = handler.slots.get(i);
+            ItemStack stack = slot.getStack();
+            if (stack.isEmpty()) continue;
+
+            String itemName = stack.getName().getString().toLowerCase();
+
+            for (String keyword : SELL_BUTTON_NAMES) {
+                if (itemName.contains(keyword)) {
+                    candidates.add(i);
+                    break;
+                }
+            }
+
+            if (hasLoreKeyword(stack)) {
+                candidates.add(i);
+            }
+        }
+
+        if (candidates.isEmpty()) return false;
+
+        int bestSlot = pickBestSlot(handler, candidates);
+        AiMod.LOGGER.info("Clicking sell button at slot {} ({})",
+                bestSlot, handler.slots.get(bestSlot).getStack().getName().getString());
+
+        client.interactionManager.clickSlot(
+                handler.syncId, bestSlot, 0, SlotActionType.PICKUP, client.player
+        );
+        return true;
+    }
+
+    private boolean hasLoreKeyword(ItemStack stack) {
+        var lore = stack.get(net.minecraft.component.DataComponentTypes.LORE);
+        if (lore == null) return false;
+
+        for (Text line : lore.lines()) {
+            String text = line.getString().toLowerCase();
+            for (String keyword : SELL_BUTTON_NAMES) {
+                if (text.contains(keyword)) return true;
+            }
+        }
+        return false;
+    }
+
+    private int pickBestSlot(net.minecraft.screen.ScreenHandler handler, List<Integer> candidates) {
+        String[] priority = {"sell all", "sell everything", "sell items", "confirm", "yes", "ok"};
+
+        for (String keyword : priority) {
+            for (int slotIdx : candidates) {
+                String name = handler.slots.get(slotIdx).getStack().getName().getString().toLowerCase();
+                if (name.contains(keyword)) return slotIdx;
+            }
+        }
+
+        return candidates.get(0);
+    }
+
     private void attemptSell(MinecraftClient client, ClientPlayerEntity player) {
-        boolean hasSellableItems = hasSellableItems(player);
-        if (!hasSellableItems) {
-            AiMod.LOGGER.info("No sellable items found in inventory.");
-            return;
-        }
-
         sendCommand(client, preferredSellCommand);
-        AiMod.LOGGER.info("Sent sell command: {}", preferredSellCommand);
+        waitingForGui = true;
+        guiWaitTimer = GUI_WAIT_TICKS;
 
-        if (client.player != null) {
-            client.player.sendMessage(
-                    net.minecraft.text.Text.literal("[AI] Inventory full - selling items..."), true
-            );
-        }
+        player.sendMessage(Text.literal("[AI] Inventory full — selling items..."), true);
+        AiMod.LOGGER.info("Sent sell command: {}", preferredSellCommand);
     }
 
     private void sendCommand(MinecraftClient client, String command) {
@@ -127,10 +209,9 @@ public class AutoSellFeature {
     private boolean hasSellableItems(ClientPlayerEntity player) {
         for (int i = 0; i < player.getInventory().size(); i++) {
             ItemStack stack = player.getInventory().getStack(i);
-            if (stack.isEmpty()) continue;
-            Item item = stack.getItem();
-            if (FISH_ITEMS.contains(item) || MOB_DROP_ITEMS.contains(item)) {
-                return true;
+            if (!stack.isEmpty()) {
+                Item item = stack.getItem();
+                if (FISH_ITEMS.contains(item) || MOB_DROP_ITEMS.contains(item)) return true;
             }
         }
         return false;
@@ -139,9 +220,7 @@ public class AutoSellFeature {
     private int countFilledSlots(ClientPlayerEntity player) {
         int count = 0;
         for (int i = 0; i < player.getInventory().main.size(); i++) {
-            if (!player.getInventory().main.get(i).isEmpty()) {
-                count++;
-            }
+            if (!player.getInventory().main.get(i).isEmpty()) count++;
         }
         return count;
     }
@@ -150,10 +229,11 @@ public class AutoSellFeature {
         int count = 0;
         for (int i = 0; i < player.getInventory().size(); i++) {
             ItemStack stack = player.getInventory().getStack(i);
-            if (stack.isEmpty()) continue;
-            Item item = stack.getItem();
-            if (FISH_ITEMS.contains(item) || MOB_DROP_ITEMS.contains(item)) {
-                count += stack.getCount();
+            if (!stack.isEmpty()) {
+                Item item = stack.getItem();
+                if (FISH_ITEMS.contains(item) || MOB_DROP_ITEMS.contains(item)) {
+                    count += stack.getCount();
+                }
             }
         }
         return count;
