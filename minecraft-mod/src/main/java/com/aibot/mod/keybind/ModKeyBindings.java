@@ -9,6 +9,8 @@ public class ModKeyBindings {
     public static KeyBinding toggleFish;
     public static KeyBinding toggleAttack;
     public static KeyBinding toggleAll;
+    public static KeyBinding toggleRecord;
+    public static KeyBinding togglePlayback;
 
     public static void register() {
         toggleFish = KeyBindingHelper.registerKeyBinding(new KeyBinding(
@@ -29,6 +31,20 @@ public class ModKeyBindings {
                 "key.aimod.toggle_all",
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_SEMICOLON,
+                "key.categories.aimod"
+        ));
+
+        toggleRecord = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.aimod.toggle_record",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_R,
+                "key.categories.aimod"
+        ));
+
+        togglePlayback = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.aimod.toggle_playback",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_P,
                 "key.categories.aimod"
         ));
     }
