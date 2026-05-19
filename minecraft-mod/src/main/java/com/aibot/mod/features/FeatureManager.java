@@ -1,7 +1,6 @@
 package com.aibot.mod.features;
 
 import com.aibot.mod.AiMod;
-import com.aibot.mod.AiModClient;
 import com.aibot.mod.ai.LearnedResponseManager;
 import com.aibot.mod.ai.OllamaClient;
 import com.aibot.mod.keybind.ModKeyBindings;
@@ -10,13 +9,13 @@ import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.text.Text;
 
 @Environment(EnvType.CLIENT)
 public class FeatureManager {
     private final AutoFishFeature autoFish = new AutoFishFeature();
     private final AutoAttackFeature autoAttack = new AutoAttackFeature();
+    private final AutoSellFeature autoSell = new AutoSellFeature();
     private final PlayerDetectionFeature playerDetection = new PlayerDetectionFeature();
     private final HumanMouseMovement mouseMovement = new HumanMouseMovement();
     private final LearnedResponseManager learnedResponses = new LearnedResponseManager();
@@ -31,9 +30,8 @@ public class FeatureManager {
 
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
         ClientReceiveMessageEvents.GAME.register(this::onGameMessage);
-        ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, receptionTimestamp) -> {
-            onChatMessage(message);
-        });
+        ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, receptionTimestamp) ->
+                onChatMessage(message));
 
         OllamaClient.isAvailable();
         AiMod.LOGGER.info("Feature manager initialized. Ollama check complete.");
@@ -44,14 +42,9 @@ public class FeatureManager {
 
         handleKeyBindings(client);
 
-        if (autoFish.isActive()) {
-            autoFish.tick();
-        }
-
-        if (autoAttack.isActive()) {
-            autoAttack.tick();
-        }
-
+        if (autoFish.isActive()) autoFish.tick();
+        if (autoAttack.isActive()) autoAttack.tick();
+        autoSell.tick();
         playerDetection.tick();
     }
 
@@ -72,6 +65,7 @@ public class FeatureManager {
             allActive = !allActive;
             autoFish.setActive(allActive);
             autoAttack.setActive(allActive);
+            autoSell.setActive(allActive);
             sendActionBar(client, "AI Mod: " + (allActive ? "ALL ON" : "ALL OFF"));
         }
     }
@@ -95,5 +89,6 @@ public class FeatureManager {
 
     public AutoFishFeature getAutoFish() { return autoFish; }
     public AutoAttackFeature getAutoAttack() { return autoAttack; }
+    public AutoSellFeature getAutoSell() { return autoSell; }
     public LearnedResponseManager getLearnedResponses() { return learnedResponses; }
 }

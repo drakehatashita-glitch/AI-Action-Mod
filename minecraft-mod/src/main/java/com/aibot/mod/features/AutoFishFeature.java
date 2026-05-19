@@ -3,12 +3,14 @@ package com.aibot.mod.features;
 import com.aibot.mod.AiMod;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.projectile.FishingBobberEntity;
 import net.minecraft.item.FishingRodItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.Hand;
+import net.minecraft.util.math.BlockPos;
 
 import java.util.Random;
 
@@ -21,6 +23,7 @@ public class AutoFishFeature {
     private int castCooldown = 0;
     private int hookCheckTimer = 0;
     private boolean waitingForBite = false;
+    private int noWaterWarnTimer = 0;
 
     public void setActive(boolean active) {
         this.active = active;
@@ -46,6 +49,17 @@ public class AutoFishFeature {
 
         if (!isHoldingFishingRod(player)) return;
 
+        if (!isNearWater(client, player)) {
+            noWaterWarnTimer++;
+            if (noWaterWarnTimer % 100 == 0) {
+                player.sendMessage(
+                    net.minecraft.text.Text.literal("[AI] No water nearby - stand next to water to fish!"), true
+                );
+            }
+            return;
+        }
+        noWaterWarnTimer = 0;
+
         mouseMovement.jitter();
 
         if (castCooldown > 0) {
@@ -57,6 +71,7 @@ public class AutoFishFeature {
 
         if (bobber == null) {
             if (!waitingForBite) {
+                lookTowardWater(client, player);
                 cast(client, player);
                 waitingForBite = true;
                 hookCheckTimer = 0;
@@ -78,6 +93,40 @@ public class AutoFishFeature {
             reelIn(client, player);
             waitingForBite = false;
             castCooldown = 5 + random.nextInt(10);
+        }
+    }
+
+    private boolean isNearWater(MinecraftClient client, ClientPlayerEntity player) {
+        BlockPos playerPos = player.getBlockPos();
+        int searchRadius = 5;
+        for (int x = -searchRadius; x <= searchRadius; x++) {
+            for (int y = -2; y <= 1; y++) {
+                for (int z = -searchRadius; z <= searchRadius; z++) {
+                    BlockPos pos = playerPos.add(x, y, z);
+                    var block = client.world.getBlockState(pos).getBlock();
+                    if (block == Blocks.WATER) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private void lookTowardWater(MinecraftClient client, ClientPlayerEntity player) {
+        BlockPos playerPos = player.getBlockPos();
+        int searchRadius = 5;
+        for (int x = -searchRadius; x <= searchRadius; x++) {
+            for (int z = -searchRadius; z <= searchRadius; z++) {
+                BlockPos pos = playerPos.add(x, -1, z);
+                var block = client.world.getBlockState(pos).getBlock();
+                if (block == Blocks.WATER) {
+                    float yaw = (float) Math.toDegrees(Math.atan2(-x, z));
+                    player.setYaw(yaw);
+                    player.setPitch(25f + random.nextFloat() * 15f);
+                    return;
+                }
+            }
         }
     }
 

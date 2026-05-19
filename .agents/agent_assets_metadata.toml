@@ -6,3 +6,9 @@ id = "J30a13PtjXu4fBoq3nnhw"
 uri = "file://aimod-source.zip"
 type = "unspecified"
 title = "AI Mod Source (Minecraft 1.21.11 Fabric)"
+
+[[outputs]]
+id = "Fm0Qx1viNEhFcA65XK4EA"
+uri = "file://aimod-source.tar.gz"
+type = "unspecified"
+title = "AI Mod - Complete Source (Minecraft 1.21.11 Fabric)"

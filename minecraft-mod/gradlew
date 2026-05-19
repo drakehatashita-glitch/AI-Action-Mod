@@ -2,6 +2,11 @@
 
 APP_HOME="$(cd "$(dirname "$0")" && pwd)"
 CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
-JAVA_EXE="java"
+
+# Find Java 21 in Nix store
+JAVA_EXE="/nix/store/3ilfkn8kxd9f6g5hgr0wpbnhghs4mq2m-openjdk-21.0.7+6/bin/java"
+if [ ! -f "$JAVA_EXE" ]; then
+    JAVA_EXE="java"
+fi
 
 exec "$JAVA_EXE" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
