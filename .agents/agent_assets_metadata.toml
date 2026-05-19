@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "J30a13PtjXu4fBoq3nnhw"
+uri = "file://aimod-source.zip"
+type = "unspecified"
+title = "AI Mod Source (Minecraft 1.21.11 Fabric)"
