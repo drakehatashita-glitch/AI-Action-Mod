@@ -22,8 +22,18 @@ public class MovementPlayback {
 
     private static final Random RANDOM = new Random();
 
+    // Per-loop variation offsets — recalculated each loop
     private float yawVariation = 0f;
     private float pitchVariation = 0f;
+
+    // Per-frame micro-noise — tiny random jitter each tick
+    private float yawNoise = 0f;
+    private float pitchNoise = 0f;
+    private int noiseRefreshTimer = 0;
+
+    // Timing drift — each loop the frame durations shift slightly
+    private float timingDriftFactor = 1.0f;
+
     private int extraPauseTicks = 0;
     private int variationRefreshTimer = 0;
 
@@ -79,20 +89,34 @@ public class MovementPlayback {
             return;
         }
 
+        // Refresh per-loop variation timer
         variationRefreshTimer--;
         if (variationRefreshTimer <= 0) {
             refreshVariation();
+        }
+
+        // Refresh micro-noise more frequently
+        noiseRefreshTimer--;
+        if (noiseRefreshTimer <= 0) {
+            yawNoise = (RANDOM.nextFloat() - 0.5f) * 0.8f;
+            pitchNoise = (RANDOM.nextFloat() - 0.5f) * 0.4f;
+            noiseRefreshTimer = 3 + RANDOM.nextInt(5);
         }
 
         ActionFrame frame = frames.get(currentFrameIndex);
         applyFrame(client, frame);
 
         currentFrameTick++;
-        if (currentFrameTick >= frame.tickDuration) {
+
+        // Timing drift: each frame lasts slightly longer or shorter than recorded
+        int effectiveDuration = Math.max(1, Math.round(frame.tickDuration * timingDriftFactor));
+
+        if (currentFrameTick >= effectiveDuration) {
             currentFrameTick = 0;
             currentFrameIndex++;
 
-            if (shouldAddMicroPause()) {
+            // Small random micro-pause between frames (~3% chance)
+            if (RANDOM.nextInt(100) < 3) {
                 extraPauseTicks = RANDOM.nextInt(3) + 1;
             }
 
@@ -101,8 +125,8 @@ public class MovementPlayback {
                 if (looping) {
                     currentFrameIndex = 0;
                     refreshVariation();
-                    int loopPause = 5 + RANDOM.nextInt(15);
-                    extraPauseTicks = loopPause;
+                    // Variable pause between loops (0.25 – 1.25 seconds)
+                    extraPauseTicks = 5 + RANDOM.nextInt(20);
                 } else {
                     stop();
                 }
@@ -120,12 +144,13 @@ public class MovementPlayback {
         client.options.rightKey.setPressed(frame.right);
         client.options.jumpKey.setPressed(frame.jumping);
         client.options.sneakKey.setPressed(frame.sneaking);
-        client.options.sprintKey.setPressed(frame.sprinting || (frame.forward && RANDOM.nextFloat() < 0.95f && shouldSprint(frame)));
+        client.options.sprintKey.setPressed(frame.sprinting || (frame.forward && !frame.sneaking && RANDOM.nextFloat() < 0.95f));
         client.options.attackKey.setPressed(frame.attacking);
         client.options.useKey.setPressed(frame.using);
 
-        float newYaw = frame.yaw + yawVariation + (RANDOM.nextFloat() - 0.5f) * 0.3f;
-        float newPitch = frame.pitch + pitchVariation + (RANDOM.nextFloat() - 0.5f) * 0.2f;
+        // Combine: per-loop yaw/pitch offset + per-tick micro-noise
+        float newYaw = frame.yaw + yawVariation + yawNoise;
+        float newPitch = frame.pitch + pitchVariation + pitchNoise;
         newPitch = Math.max(-90f, Math.min(90f, newPitch));
 
         player.setYaw(newYaw);
@@ -133,17 +158,14 @@ public class MovementPlayback {
     }
 
     private void refreshVariation() {
-        yawVariation = (RANDOM.nextFloat() - 0.5f) * 4f;
-        pitchVariation = (RANDOM.nextFloat() - 0.5f) * 2f;
-        variationRefreshTimer = 40 + RANDOM.nextInt(80);
-    }
+        // Each loop: slightly different look direction (±5° yaw, ±2.5° pitch)
+        yawVariation = (RANDOM.nextFloat() - 0.5f) * 10f;
+        pitchVariation = (RANDOM.nextFloat() - 0.5f) * 5f;
 
-    private boolean shouldAddMicroPause() {
-        return RANDOM.nextInt(100) < 3;
-    }
+        // Timing drift: 90%–110% of recorded speed
+        timingDriftFactor = 0.90f + RANDOM.nextFloat() * 0.20f;
 
-    private boolean shouldSprint(ActionFrame frame) {
-        return frame.forward && !frame.sneaking;
+        variationRefreshTimer = 60 + RANDOM.nextInt(80);
     }
 
     private void releaseAllKeys() {
