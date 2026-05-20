@@ -135,7 +135,7 @@ public class AutoAttackFeature {
             attackCooldown = 9 + random.nextInt(5);
         }
 
-        lastPlayerPos = player.getPos();
+        lastPlayerPos = new Vec3d(player.getX(), player.getY(), player.getZ());
     }
 
     private void tickStrafe(MinecraftClient client, ClientPlayerEntity player, double dist) {
@@ -191,7 +191,8 @@ public class AutoAttackFeature {
 
         // Run away from target
         if (currentTarget != null) {
-            Vec3d toTarget = currentTarget.getPos().subtract(player.getPos()).normalize();
+            Vec3d toTarget = new Vec3d(currentTarget.getX(), currentTarget.getY(), currentTarget.getZ())
+                    .subtract(player.getX(), player.getY(), player.getZ()).normalize();
             float fleeYaw = (float) Math.toDegrees(Math.atan2(-toTarget.x, toTarget.z)) + 180f;
             mouseMovement.setTargetAngles(fleeYaw, player.getPitch());
             mouseMovement.tick();
@@ -216,7 +217,8 @@ public class AutoAttackFeature {
     }
 
     private void moveTowardTarget(MinecraftClient client, ClientPlayerEntity player) {
-        Vec3d dir = currentTarget.getPos().subtract(player.getPos()).normalize();
+        Vec3d dir = new Vec3d(currentTarget.getX(), currentTarget.getY(), currentTarget.getZ())
+                .subtract(player.getX(), player.getY(), player.getZ()).normalize();
         float targetYaw = (float) Math.toDegrees(Math.atan2(-dir.x, dir.z));
         mouseMovement.setTargetAngles(targetYaw, player.getPitch());
 

@@ -53,7 +53,7 @@ public class MovementRecorder {
 
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null) {
-            lastHotbarSlot = client.player.getInventory().selectedSlot;
+            lastHotbarSlot = getSelectedSlot(client);
             client.player.sendMessage(
                 Text.literal("[AI] Recording started — press [R] to stop."), true);
         }
@@ -121,7 +121,7 @@ public class MovementRecorder {
         frame.pitch = player.getPitch();
 
         // --- Hotbar slot (record change only) ---
-        int currentSlot = player.getInventory().selectedSlot;
+        int currentSlot = getSelectedSlot(client);
         if (currentSlot != lastHotbarSlot) {
             frame.hotbarSlot = currentSlot;
             lastHotbarSlot = currentSlot;
@@ -292,6 +292,20 @@ public class MovementRecorder {
         } catch (IOException e) {
             return 0;
         }
+    }
+
+    /**
+     * Returns the player's currently selected hotbar slot (0-8) by checking
+     * which hotbar key is pressed, falling back to the last known slot.
+     * Avoids direct access to PlayerInventory.selectedSlot which may be private
+     * in some Yarn mapping versions.
+     */
+    private int getSelectedSlot(MinecraftClient client) {
+        for (int i = 0; i < 9; i++) {
+            if (client.options.hotbarKeys[i].isPressed()) return i;
+        }
+        // No hotbar key actively pressed — return cached value
+        return lastHotbarSlot < 0 ? 0 : lastHotbarSlot;
     }
 
     private String sanitize(String name) {

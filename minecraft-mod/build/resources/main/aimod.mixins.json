@@ -4,7 +4,8 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [],
   "client": [
-    "ClientPlayerEntityMixin"
+    "ClientPlayerEntityMixin",
+    "ChatScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1

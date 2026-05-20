@@ -232,9 +232,11 @@ public class MovementPlayback {
             player.setPitch(newPitch);
         }
 
-        // --- Hotbar slot change ---
+        // --- Hotbar slot change (simulate key press rather than direct field write) ---
         if (frame.hotbarSlot >= 0 && frame.hotbarSlot <= 8) {
-            player.getInventory().selectedSlot = frame.hotbarSlot;
+            final int slot = frame.hotbarSlot;
+            client.options.hotbarKeys[slot].setPressed(true);
+            client.execute(() -> client.options.hotbarKeys[slot].setPressed(false));
         }
 
         // --- One-tick event actions ---

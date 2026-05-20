@@ -11,6 +11,26 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Build Fabric Mod"
+
+[[workflows.workflow]]
+name = "Build Fabric Mod"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd minecraft-mod && ./gradlew build --no-daemon 2>&1 | tee /tmp/gradle-build.log; echo \"BUILD_EXIT_CODE:$?\" | tee -a /tmp/gradle-build.log"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
