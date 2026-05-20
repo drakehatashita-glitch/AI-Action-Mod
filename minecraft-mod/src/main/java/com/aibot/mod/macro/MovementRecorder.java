@@ -19,15 +19,25 @@ import java.util.List;
 @Environment(EnvType.CLIENT)
 public class MovementRecorder {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Path RECORDINGS_DIR = FabricLoader.getInstance().getGameDir().resolve("aimod/recordings");
+    private static final Path RECORDINGS_DIR =
+            FabricLoader.getInstance().getGameDir().resolve("aimod/recordings");
 
     private boolean recording = false;
     private final List<ActionFrame> frames = new ArrayList<>();
     private String recordingName = "last";
 
-    // Track recording stats
     private long recordingStartTime = 0;
     private int rawFrameCount = 0;
+
+    // Track previous per-tick state to detect one-tick events
+    private int lastHotbarSlot = -1;
+    private boolean lastDropItem = false;
+    private boolean lastSwapHands = false;
+    private boolean lastPickBlock = false;
+
+    // -------------------------------------------------------------------------
+    // Start / stop
+    // -------------------------------------------------------------------------
 
     public void startRecording(String name) {
         frames.clear();
@@ -35,11 +45,17 @@ public class MovementRecorder {
         recording = true;
         rawFrameCount = 0;
         recordingStartTime = System.currentTimeMillis();
+        lastHotbarSlot = -1;
+        lastDropItem = false;
+        lastSwapHands = false;
+        lastPickBlock = false;
         AiMod.LOGGER.info("Recording started: {}", name);
 
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null) {
-            client.player.sendMessage(Text.literal("[AI] Recording started — press [R] to stop."), true);
+            lastHotbarSlot = client.player.getInventory().selectedSlot;
+            client.player.sendMessage(
+                Text.literal("[AI] Recording started — press [R] to stop."), true);
         }
     }
 
@@ -52,7 +68,8 @@ public class MovementRecorder {
 
         if (frames.isEmpty()) {
             if (client.player != null) {
-                client.player.sendMessage(Text.literal("[AI] Recording stopped — no frames captured."), true);
+                client.player.sendMessage(
+                    Text.literal("[AI] Recording stopped — no frames captured."), true);
             }
             return;
         }
@@ -64,7 +81,8 @@ public class MovementRecorder {
 
         save(recordingName);
         AiMod.LOGGER.info("Recording '{}': {}ms, {} raw frames -> {} compressed ({} %)",
-                recordingName, durationMs, before, after, String.format("%.0f", compressionRatio));
+                recordingName, durationMs, before, after,
+                String.format("%.0f", compressionRatio));
 
         if (client.player != null) {
             client.player.sendMessage(Text.literal(String.format(
@@ -73,6 +91,10 @@ public class MovementRecorder {
             )), true);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Per-tick recording (called from FeatureManager)
+    // -------------------------------------------------------------------------
 
     public void tick() {
         if (!recording) return;
@@ -83,21 +105,71 @@ public class MovementRecorder {
         ClientPlayerEntity player = client.player;
         ActionFrame frame = new ActionFrame();
 
-        frame.forward = client.options.forwardKey.isPressed();
-        frame.backward = client.options.backKey.isPressed();
-        frame.left = client.options.leftKey.isPressed();
-        frame.right = client.options.rightKey.isPressed();
-        frame.jumping = client.options.jumpKey.isPressed();
-        frame.sneaking = client.options.sneakKey.isPressed();
+        // --- Movement keys ---
+        frame.forward   = client.options.forwardKey.isPressed();
+        frame.backward  = client.options.backKey.isPressed();
+        frame.left      = client.options.leftKey.isPressed();
+        frame.right     = client.options.rightKey.isPressed();
+        frame.jumping   = client.options.jumpKey.isPressed();
+        frame.sneaking  = client.options.sneakKey.isPressed();
         frame.sprinting = client.options.sprintKey.isPressed();
         frame.attacking = client.options.attackKey.isPressed();
-        frame.using = client.options.useKey.isPressed();
-        frame.yaw = player.getYaw();
+        frame.using     = client.options.useKey.isPressed();
+
+        // --- Look direction ---
+        frame.yaw   = player.getYaw();
         frame.pitch = player.getPitch();
+
+        // --- Hotbar slot (record change only) ---
+        int currentSlot = player.getInventory().selectedSlot;
+        if (currentSlot != lastHotbarSlot) {
+            frame.hotbarSlot = currentSlot;
+            lastHotbarSlot = currentSlot;
+        }
+
+        // --- Drop item key (Q) — rising-edge only ---
+        boolean dropNow = client.options.dropKey.isPressed();
+        frame.dropItem = dropNow && !lastDropItem;
+        lastDropItem = dropNow;
+
+        // --- Swap hands key (F) — rising-edge only ---
+        boolean swapNow = client.options.swapHandsKey.isPressed();
+        frame.swapHands = swapNow && !lastSwapHands;
+        lastSwapHands = swapNow;
+
+        // --- Pick block (middle click) — rising-edge only ---
+        boolean pickNow = client.options.pickItemKey.isPressed();
+        frame.pickBlock = pickNow && !lastPickBlock;
+        lastPickBlock = pickNow;
 
         rawFrameCount++;
         frames.add(frame);
     }
+
+    // -------------------------------------------------------------------------
+    // Chat / command recording (called from ChatScreenMixin)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Records a chat message or command sent by the player.
+     * Commands should be passed with their leading '/' included.
+     * This inserts a dedicated event frame at the current recording position.
+     */
+    public void recordChatOrCommand(String text) {
+        if (!recording || text == null || text.isBlank()) return;
+
+        // Build a frame that carries only the chat event; movement state is neutral.
+        ActionFrame frame = new ActionFrame();
+        frame.chatMessage = text.trim();
+        frames.add(frame);
+
+        String kind = text.startsWith("/") ? "command" : "chat";
+        AiMod.LOGGER.info("[Recorder] Captured {}: {}", kind, text);
+    }
+
+    // -------------------------------------------------------------------------
+    // Compression
+    // -------------------------------------------------------------------------
 
     private void compressFrames() {
         if (frames.size() < 2) return;
@@ -107,8 +179,10 @@ public class MovementRecorder {
 
         for (int i = 1; i < frames.size(); i++) {
             ActionFrame next = frames.get(i);
-            // Allow longer runs (up to 40 ticks) for better compression
-            if (framesEqual(current, next) && current.tickDuration < 40) {
+            // Never merge frames that carry one-tick events
+            if (!current.hasEvent() && !next.hasEvent()
+                    && framesEqual(current, next)
+                    && current.tickDuration < 40) {
                 current.tickDuration++;
             } else {
                 compressed.add(current);
@@ -122,14 +196,23 @@ public class MovementRecorder {
     }
 
     private boolean framesEqual(ActionFrame a, ActionFrame b) {
-        return a.forward == b.forward && a.backward == b.backward
-                && a.left == b.left && a.right == b.right
-                && a.jumping == b.jumping && a.sneaking == b.sneaking
-                && a.sprinting == b.sprinting && a.attacking == b.attacking
-                && a.using == b.using
-                && Math.abs(a.yaw - b.yaw) < 1.2f
-                && Math.abs(a.pitch - b.pitch) < 1.2f;
+        return a.forward    == b.forward
+            && a.backward   == b.backward
+            && a.left       == b.left
+            && a.right      == b.right
+            && a.jumping    == b.jumping
+            && a.sneaking   == b.sneaking
+            && a.sprinting  == b.sprinting
+            && a.attacking  == b.attacking
+            && a.using      == b.using
+            && a.hotbarSlot == b.hotbarSlot
+            && Math.abs(a.yaw   - b.yaw)   < 1.2f
+            && Math.abs(a.pitch - b.pitch) < 1.2f;
     }
+
+    // -------------------------------------------------------------------------
+    // Persistence
+    // -------------------------------------------------------------------------
 
     public void save(String name) {
         try {
@@ -178,13 +261,14 @@ public class MovementRecorder {
         }
     }
 
-    public List<ActionFrame> getLastFrames() {
-        return new ArrayList<>(frames);
-    }
+    // -------------------------------------------------------------------------
+    // Accessors
+    // -------------------------------------------------------------------------
 
-    public boolean isRecording() { return recording; }
-    public String getRecordingName() { return recordingName; }
-    public int getRawFrameCount() { return rawFrameCount; }
+    public List<ActionFrame> getLastFrames() { return new ArrayList<>(frames); }
+    public boolean isRecording()             { return recording; }
+    public String  getRecordingName()        { return recordingName; }
+    public int     getRawFrameCount()        { return rawFrameCount; }
 
     public List<String> listRecordings() {
         try {
@@ -193,7 +277,8 @@ public class MovementRecorder {
             Files.list(RECORDINGS_DIR)
                     .filter(p -> p.toString().endsWith(".json"))
                     .sorted()
-                    .forEach(p -> names.add(p.getFileName().toString().replace(".json", "")));
+                    .forEach(p -> names.add(
+                        p.getFileName().toString().replace(".json", "")));
             return names;
         } catch (IOException e) {
             return new ArrayList<>();

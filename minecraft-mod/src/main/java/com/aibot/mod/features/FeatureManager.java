@@ -19,6 +19,11 @@ import net.minecraft.text.Text;
 
 @Environment(EnvType.CLIENT)
 public class FeatureManager {
+    private static FeatureManager INSTANCE;
+
+    /** Returns the active FeatureManager, or null before init. */
+    public static FeatureManager getInstance() { return INSTANCE; }
+
     private final AutoFishFeature autoFish = new AutoFishFeature();
     private final AutoAttackFeature autoAttack = new AutoAttackFeature();
     private final AutoSellFeature autoSell = new AutoSellFeature();
@@ -38,6 +43,7 @@ public class FeatureManager {
 
     public FeatureManager() {
         promptExecutor = new AiPromptExecutor(playback);
+        INSTANCE = this;
     }
 
     public void init() {
