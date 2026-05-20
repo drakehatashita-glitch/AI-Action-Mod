@@ -12,3 +12,9 @@ id = "Fm0Qx1viNEhFcA65XK4EA"
 uri = "file://aimod-source.tar.gz"
 type = "unspecified"
 title = "AI Mod - Updated Source (GUI Sell Support)"
+
+[[outputs]]
+id = "7VQsDiR-AwaiayKvNHCgm"
+uri = "file://aimod-1.0.0.tar.gz"
+type = "unspecified"
+title = "aimod-1.0.0.jar (tar.gz) — Minecraft Fabric Mod 1.21.11"

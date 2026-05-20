@@ -12,48 +12,29 @@ public class ModKeyBindings {
     public static KeyBinding toggleRecord;
     public static KeyBinding togglePlayback;
     public static KeyBinding openPromptGui;
+    public static KeyBinding openRecordingManager;
 
     public static void register() {
         toggleFish = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.aimod.toggle_fish",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_K,
-                "key.categories.aimod"
+                "key.aimod.toggle_fish", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_K, KeyBinding.Category.MISC
         ));
-
         toggleAttack = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.aimod.toggle_attack",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_L,
-                "key.categories.aimod"
+                "key.aimod.toggle_attack", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_L, KeyBinding.Category.MISC
         ));
-
         toggleAll = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.aimod.toggle_all",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_SEMICOLON,
-                "key.categories.aimod"
+                "key.aimod.toggle_all", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_SEMICOLON, KeyBinding.Category.MISC
         ));
-
         toggleRecord = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.aimod.toggle_record",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_R,
-                "key.categories.aimod"
+                "key.aimod.toggle_record", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, KeyBinding.Category.MISC
         ));
-
         togglePlayback = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.aimod.toggle_playback",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_P,
-                "key.categories.aimod"
+                "key.aimod.toggle_playback", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_P, KeyBinding.Category.MISC
         ));
-
         openPromptGui = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.aimod.open_prompt_gui",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_G,
-                "key.categories.aimod"
+                "key.aimod.open_prompt_gui", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_G, KeyBinding.Category.MISC
+        ));
+        openRecordingManager = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.aimod.open_recording_manager", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_J, KeyBinding.Category.MISC
         ));
     }
 }

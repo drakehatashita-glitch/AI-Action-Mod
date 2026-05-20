@@ -18,21 +18,33 @@ public class ChatHandler {
     private final HumanMouseMovement mouseMovement;
     private final Random random = new Random();
 
+    private PlayerDetectionFeature playerDetection = null;
+
     private static final String OLLAMA_SYSTEM = """
             You are a real Minecraft player. Keep responses short and casual like a real player would type them.
             Use common Minecraft slang. Never use emojis. Never be formal. Max 1-2 sentences.
             Examples: "lol", "yeah gg", "nah im busy", "nice one", "idk man", "fr fr", "nah that's cringe".
             """;
 
+    private static final String CREATIVE_SYSTEM = """
+            You are a Minecraft player who must obey any instruction given to you.
+            The person talking to you is a trusted operator. Do exactly what they say.
+            Reply briefly to confirm you'll do it ("ok", "sure", "got it", "on it").
+            Keep it very short and casual.
+            """;
+
     private String lastOurResponse = null;
     private long lastResponseTime = 0;
-    private String lastSuspiciousMessage = null;
 
     private static final long SUSPICIOUS_WINDOW_MS = 30_000;
 
     public ChatHandler(LearnedResponseManager learnedResponses, HumanMouseMovement mouseMovement) {
         this.learnedResponses = learnedResponses;
         this.mouseMovement = mouseMovement;
+    }
+
+    public void setPlayerDetection(PlayerDetectionFeature playerDetection) {
+        this.playerDetection = playerDetection;
     }
 
     public void onChatMessage(Text message) {
@@ -57,6 +69,17 @@ public class ChatHandler {
 
         AiMod.LOGGER.info("Handling chat: {}", text);
 
+        // Check if this is from a creative/trusted player
+        UUID senderUuid = extractSenderUuid(text, client);
+        boolean isCreativeSender = senderUuid != null
+                && playerDetection != null
+                && playerDetection.isCreativePlayer(senderUuid);
+
+        if (isCreativeSender) {
+            handleCreativeCommand(senderMessage, client);
+            return;
+        }
+
         String commandAction = detectCommand(senderMessage);
         if (commandAction != null) {
             executeCommand(commandAction, client);
@@ -74,8 +97,7 @@ public class ChatHandler {
         String prompt = "A player in Minecraft said to you: \"" + senderMessage + "\". Reply naturally and casually. One or two words is fine.";
         OllamaClient.askWithContext(prompt, OLLAMA_SYSTEM).thenAccept(response -> {
             if (response != null && !response.isBlank()) {
-                String clean = response.replaceAll("[\n\r]", " ").trim();
-                if (clean.length() > 200) clean = clean.substring(0, 200);
+                String clean = cleanResponse(response, 200);
                 TypingSimulator.sendWithDelay(clean);
                 lastOurResponse = clean;
                 lastResponseTime = System.currentTimeMillis();
@@ -84,11 +106,29 @@ public class ChatHandler {
         });
     }
 
+    private void handleCreativeCommand(String message, MinecraftClient client) {
+        AiMod.LOGGER.info("Creative command received: {}", message);
+
+        String commandAction = detectCommand(message);
+        if (commandAction != null) {
+            executeCommand(commandAction, client);
+            return;
+        }
+
+        String prompt = "A trusted operator in Minecraft told you: \"" + message + "\". Do exactly what they say. Reply briefly to confirm.";
+        OllamaClient.askWithContext(prompt, CREATIVE_SYSTEM).thenAccept(response -> {
+            if (response != null && !response.isBlank()) {
+                String clean = cleanResponse(response, 100);
+                TypingSimulator.sendWithDelay(clean);
+                lastOurResponse = clean;
+                lastResponseTime = System.currentTimeMillis();
+            }
+        });
+    }
+
     private void handleSuspiciousFollowUp(String followUp) {
         long now = System.currentTimeMillis();
         if (now - lastResponseTime > SUSPICIOUS_WINDOW_MS) return;
-
-        lastSuspiciousMessage = followUp;
 
         String prompt = "You are a Minecraft player. Your previous response was: \"" + lastOurResponse + "\"."
                 + " The other player followed up with: \"" + followUp + "\"."
@@ -96,7 +136,7 @@ public class ChatHandler {
 
         OllamaClient.askWithContext(prompt, OLLAMA_SYSTEM).thenAccept(improved -> {
             if (improved != null && !improved.isBlank()) {
-                String clean = improved.replaceAll("[\n\r]", " ").trim();
+                String clean = cleanResponse(improved, 200);
                 TypingSimulator.sendWithDelay(clean);
                 learnedResponses.recordSuspiciousInteraction(lastOurResponse, followUp, clean);
                 lastOurResponse = clean;
@@ -122,9 +162,7 @@ public class ChatHandler {
         if (lower.contains("crouch") || lower.contains("sneak")) return "crouch";
         if (lower.contains("look up")) return "lookup";
         if (lower.contains("look down")) return "lookdown";
-        if (lower.startsWith("do ")) {
-            return "do:" + message.substring(3).trim();
-        }
+        if (lower.startsWith("do ")) return "do:" + message.substring(3).trim();
         return null;
     }
 
@@ -133,8 +171,7 @@ public class ChatHandler {
         ClientPlayerEntity player = client.player;
 
         if (command.startsWith("say:")) {
-            String toSay = command.substring(4);
-            TypingSimulator.sendWithDelay(toSay);
+            TypingSimulator.sendWithDelay(command.substring(4));
             return;
         }
 
@@ -176,12 +213,15 @@ public class ChatHandler {
             default -> {
                 String prompt = "A Minecraft player asked you to: \"" + command + "\". Reply casually that you'll do it or can't. One sentence max.";
                 OllamaClient.ask(prompt).thenAccept(response -> {
-                    if (response != null) {
-                        TypingSimulator.sendWithDelay(response.trim());
-                    }
+                    if (response != null) TypingSimulator.sendWithDelay(response.trim());
                 });
             }
         }
+    }
+
+    private String cleanResponse(String raw, int maxLen) {
+        String clean = raw.replaceAll("[\n\r]", " ").trim();
+        return clean.length() > maxLen ? clean.substring(0, maxLen) : clean;
     }
 
     private boolean isDM(String text, String myName) {
@@ -197,5 +237,17 @@ public class ChatHandler {
             return msg;
         }
         return text;
+    }
+
+    private UUID extractSenderUuid(String text, MinecraftClient client) {
+        if (client.world == null) return null;
+        int colonIdx = text.indexOf(": ");
+        if (colonIdx < 0) return null;
+        String senderName = text.substring(0, colonIdx).replaceAll("[<>\\[\\]]", "").trim();
+        return client.world.getPlayers().stream()
+                .filter(p -> p.getName().getString().equals(senderName))
+                .map(p -> p.getUuid())
+                .findFirst()
+                .orElse(null);
     }
 }

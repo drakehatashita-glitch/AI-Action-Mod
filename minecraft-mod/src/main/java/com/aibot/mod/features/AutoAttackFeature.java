@@ -94,7 +94,7 @@ public class AutoAttackFeature {
             attackCooldown = 10 + random.nextInt(4);
         }
 
-        lastPlayerPos = player.getPos();
+        lastPlayerPos = new Vec3d(player.getX(), player.getY(), player.getZ());
     }
 
     public void onDisplacedByPlayer() {
@@ -116,8 +116,8 @@ public class AutoAttackFeature {
     }
 
     private void moveTowardTarget(MinecraftClient client, ClientPlayerEntity player) {
-        Vec3d playerPos = player.getPos();
-        Vec3d targetPos = currentTarget.getPos();
+        Vec3d playerPos = new Vec3d(player.getX(), player.getY(), player.getZ());
+        Vec3d targetPos = new Vec3d(currentTarget.getX(), currentTarget.getY(), currentTarget.getZ());
         Vec3d dir = targetPos.subtract(playerPos).normalize();
 
         float targetYaw = (float) Math.toDegrees(Math.atan2(-dir.x, dir.z));

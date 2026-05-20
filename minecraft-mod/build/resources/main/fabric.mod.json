@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "aimod",
+  "version": "1.0.0",
+  "name": "AI Mod",
+  "description": "AI-powered automation mod with auto-fishing, auto-attack, and Ollama-based chat responses.",
+  "authors": ["User"],
+  "environment": "client",
+  "entrypoints": {
+    "main": ["com.aibot.mod.AiMod"],
+    "client": ["com.aibot.mod.AiModClient"]
+  },
+  "mixins": ["aimod.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.18.1",
+    "fabric-api": "*",
+    "minecraft": "~1.21.11"
+  }
+}

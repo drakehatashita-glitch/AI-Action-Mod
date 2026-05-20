@@ -1,0 +1,14 @@
+{
+  "projectPath": ":",
+  "classpaths": {
+    "test": [
+      "/home/runner/workspace/minecraft-mod/build/classes/java/test",
+      "/home/runner/workspace/minecraft-mod/build/resources/test"
+    ],
+    "main": [
+      "/home/runner/workspace/minecraft-mod/build/classes/java/main",
+      "/home/runner/workspace/minecraft-mod/build/resources/main",
+      "/home/runner/workspace/minecraft-mod/build/devlibs/aimod-1.0.0-dev.jar"
+    ]
+  }
+}

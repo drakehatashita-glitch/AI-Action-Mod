@@ -4,6 +4,7 @@ import com.aibot.mod.AiMod;
 import com.aibot.mod.ai.LearnedResponseManager;
 import com.aibot.mod.ai.OllamaClient;
 import com.aibot.mod.gui.PromptScreen;
+import com.aibot.mod.gui.RecordingManagerScreen;
 import com.aibot.mod.keybind.ModKeyBindings;
 import com.aibot.mod.macro.AiPromptExecutor;
 import com.aibot.mod.macro.MovementPlayback;
@@ -38,6 +39,10 @@ public class FeatureManager {
     public void init() {
         learnedResponses.load();
         chatHandler = new ChatHandler(learnedResponses, mouseMovement);
+        chatHandler.setPlayerDetection(playerDetection);
+
+        playerDetection.setPlayback(playback);
+        promptExecutor.setRecorder(recorder);
 
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
         ClientReceiveMessageEvents.GAME.register(this::onGameMessage);
@@ -45,7 +50,7 @@ public class FeatureManager {
                 onChatMessage(message));
 
         OllamaClient.isAvailable();
-        AiMod.LOGGER.info("Feature manager initialized. Ollama check complete.");
+        AiMod.LOGGER.info("Feature manager initialized.");
     }
 
     private void onClientTick(MinecraftClient client) {
@@ -85,6 +90,10 @@ public class FeatureManager {
         while (ModKeyBindings.toggleRecord.wasPressed()) {
             if (recorder.isRecording()) {
                 recorder.stopRecording();
+                // Auto-open prompt screen to name and describe the recording
+                if (client.currentScreen == null) {
+                    client.setScreen(new PromptScreen(promptExecutor, recorder, true));
+                }
             } else {
                 if (playback.isPlaying()) playback.stop();
                 recorder.startRecording("last");
@@ -92,11 +101,13 @@ public class FeatureManager {
         }
 
         while (ModKeyBindings.togglePlayback.wasPressed()) {
-            if (playback.isPlaying()) {
+            if (playback.isPlaying() || playback.isScanning()) {
                 playback.stop();
+                playback.stopScan();
             } else {
                 var frames = recorder.load("last");
                 if (frames != null && !frames.isEmpty()) {
+                    playback.setMouseLocked(false);
                     playback.start(frames, true);
                 } else {
                     sendActionBar(client, "No recording found. Press [R] to record first.");
@@ -106,7 +117,13 @@ public class FeatureManager {
 
         while (ModKeyBindings.openPromptGui.wasPressed()) {
             if (client.currentScreen == null) {
-                client.setScreen(new PromptScreen());
+                client.setScreen(new PromptScreen(promptExecutor));
+            }
+        }
+
+        while (ModKeyBindings.openRecordingManager.wasPressed()) {
+            if (client.currentScreen == null) {
+                client.setScreen(new RecordingManagerScreen(recorder, playback));
             }
         }
     }

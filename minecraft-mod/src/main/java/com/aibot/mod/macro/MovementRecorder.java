@@ -33,7 +33,7 @@ public class MovementRecorder {
 
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null) {
-            client.player.sendMessage(Text.literal("[AI] Recording started — do your thing, press [R] to stop."), true);
+            client.player.sendMessage(Text.literal("[AI] Recording started — press [R] to stop."), true);
         }
     }
 
@@ -56,7 +56,7 @@ public class MovementRecorder {
 
         if (client.player != null) {
             client.player.sendMessage(
-                Text.literal("[AI] Saved " + frames.size() + " frames as '" + recordingName + "'. Press [P] to replay."), true
+                Text.literal("[AI] Saved " + frames.size() + " frames as '" + recordingName + "'."), true
             );
         }
     }
@@ -117,7 +117,7 @@ public class MovementRecorder {
     public void save(String name) {
         try {
             Files.createDirectories(RECORDINGS_DIR);
-            Path file = RECORDINGS_DIR.resolve(name + ".json");
+            Path file = RECORDINGS_DIR.resolve(sanitize(name) + ".json");
             Files.writeString(file, GSON.toJson(frames));
             AiMod.LOGGER.info("Saved recording to {}", file);
         } catch (IOException e) {
@@ -125,13 +125,34 @@ public class MovementRecorder {
         }
     }
 
+    public void saveFrames(String name, List<ActionFrame> framesToSave) {
+        try {
+            Files.createDirectories(RECORDINGS_DIR);
+            Path file = RECORDINGS_DIR.resolve(sanitize(name) + ".json");
+            Files.writeString(file, GSON.toJson(framesToSave));
+            AiMod.LOGGER.info("Saved {} frames as '{}'", framesToSave.size(), name);
+        } catch (IOException e) {
+            AiMod.LOGGER.error("Failed to save frames as '{}'", name, e);
+        }
+    }
+
+    public boolean delete(String name) {
+        try {
+            Path file = RECORDINGS_DIR.resolve(sanitize(name) + ".json");
+            return Files.deleteIfExists(file);
+        } catch (IOException e) {
+            AiMod.LOGGER.error("Failed to delete recording: {}", name, e);
+            return false;
+        }
+    }
+
     public List<ActionFrame> load(String name) {
         try {
-            Path file = RECORDINGS_DIR.resolve(name + ".json");
+            Path file = RECORDINGS_DIR.resolve(sanitize(name) + ".json");
             if (!Files.exists(file)) return null;
             String json = Files.readString(file);
             ActionFrame[] arr = GSON.fromJson(json, ActionFrame[].class);
-            return arr != null ? List.of(arr) : null;
+            return arr != null ? new ArrayList<>(List.of(arr)) : null;
         } catch (IOException e) {
             AiMod.LOGGER.error("Failed to load recording: {}", name, e);
             return null;
@@ -144,16 +165,23 @@ public class MovementRecorder {
 
     public boolean isRecording() { return recording; }
 
+    public String getRecordingName() { return recordingName; }
+
     public List<String> listRecordings() {
         try {
             Files.createDirectories(RECORDINGS_DIR);
             List<String> names = new ArrayList<>();
             Files.list(RECORDINGS_DIR)
                     .filter(p -> p.toString().endsWith(".json"))
+                    .sorted()
                     .forEach(p -> names.add(p.getFileName().toString().replace(".json", "")));
             return names;
         } catch (IOException e) {
-            return List.of();
+            return new ArrayList<>();
         }
+    }
+
+    private String sanitize(String name) {
+        return name.replaceAll("[^a-zA-Z0-9_\\-]", "_");
     }
 }

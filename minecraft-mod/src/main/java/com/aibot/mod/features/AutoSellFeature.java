@@ -200,7 +200,7 @@ public class AutoSellFeature {
         if (client.player == null) return;
         try {
             String cmd = command.startsWith("/") ? command.substring(1) : command;
-            client.player.networkHandler.sendCommand(cmd);
+            client.player.networkHandler.sendChatCommand(cmd);
         } catch (Exception e) {
             AiMod.LOGGER.error("Failed to send sell command: {}", e.getMessage());
         }
@@ -219,8 +219,8 @@ public class AutoSellFeature {
 
     private int countFilledSlots(ClientPlayerEntity player) {
         int count = 0;
-        for (int i = 0; i < player.getInventory().main.size(); i++) {
-            if (!player.getInventory().main.get(i).isEmpty()) count++;
+        for (int i = 0; i < 36; i++) {
+            if (!player.getInventory().getStack(i).isEmpty()) count++;
         }
         return count;
     }
