@@ -3,6 +3,7 @@ package com.aibot.mod.macro;
 import com.aibot.mod.AiMod;
 import com.aibot.mod.ai.OllamaClient;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.fabricmc.api.EnvType;
@@ -23,8 +24,7 @@ public class AiPromptExecutor {
     private MovementRecorder recorder = null;
 
     private static final String SYSTEM_PROMPT = """
-            You are a Minecraft bot controller. The user gives you a plain English description of what they want to do in Minecraft.
-            You must respond with ONLY a valid JSON object describing a sequence of actions.
+            You are a Minecraft bot controller. Convert plain English instructions into a JSON action sequence.
             
             Available action types:
             - move_forward (ticks: int)
@@ -34,25 +34,30 @@ public class AiPromptExecutor {
             - jump (ticks: int)
             - crouch (ticks: int)
             - sprint_forward (ticks: int)
+            - sprint_jump (ticks: int) — sprint and jump simultaneously
             - attack (times: int, pause_between: int)
             - use (times: int, pause_between: int)
             - look (yaw_offset: float, pitch: float, ticks: int)
             - wait (ticks: int)
+            - circle_strafe (radius_ticks: int, direction: "left"|"right")
             
-            1 second = 20 ticks. Respond ONLY with JSON like this:
+            Rules:
+            - 1 second = 20 ticks
+            - "repeat": true means loop forever, false for one-time
+            - "lock_mouse": true only if user explicitly says to keep mouse fixed
+            - Respond ONLY with valid JSON, no other text
+            
+            Example:
             {
               "repeat": true,
               "lock_mouse": false,
+              "description": "Sprint forward and attack repeatedly",
               "actions": [
                 {"type": "sprint_forward", "ticks": 40},
                 {"type": "attack", "times": 3, "pause_between": 8},
                 {"type": "wait", "ticks": 10}
               ]
             }
-            
-            Set "lock_mouse": true only if the user explicitly says not to move their mouse or to keep it fixed.
-            Set "repeat": true if the user wants it to loop forever, false for a one-time action.
-            No text before or after the JSON. Only the JSON object.
             """;
 
     public AiPromptExecutor(MovementPlayback playback) {
@@ -79,11 +84,12 @@ public class AiPromptExecutor {
 
         boolean mouseLockHint = detectMouseLockHint(userPrompt);
 
-        String fullPrompt = "The Minecraft player wants to: " + userPrompt + "\nRespond with ONLY the JSON action sequence.";
+        String fullPrompt = "Minecraft player instruction: " + userPrompt
+                + "\nRespond with ONLY the JSON action sequence, no other text.";
 
-        OllamaClient.askWithContext(fullPrompt, SYSTEM_PROMPT).thenAccept(response -> {
+        OllamaClient.askWithOptions(fullPrompt, SYSTEM_PROMPT, 0.3, 400).thenAccept(response -> {
             if (response == null || response.isBlank()) {
-                AiMod.LOGGER.error("Ollama returned no response for prompt");
+                AiMod.LOGGER.error("No response from Ollama for prompt");
                 client.execute(() -> {
                     if (client.player != null) {
                         client.player.sendMessage(
@@ -100,7 +106,7 @@ public class AiPromptExecutor {
                 AiMod.LOGGER.error("Failed to parse AI action sequence: {}", response);
                 client.execute(() -> {
                     if (client.player != null) {
-                        client.player.sendMessage(Text.literal("[AI] Could not parse action sequence."), true);
+                        client.player.sendMessage(Text.literal("[AI] Could not parse action sequence — try rephrasing."), true);
                     }
                 });
                 return;
@@ -122,6 +128,7 @@ public class AiPromptExecutor {
                     client.player.sendMessage(
                         Text.literal("[AI] Running: \"" + truncate(userPrompt, 40) + "\""
                             + (lockMouse ? " [mouse locked]" : "")
+                            + (shouldRepeat ? " [looping]" : "")
                             + (saveName != null ? " — saved as '" + saveName + "'" : "")), true
                     );
                 }
@@ -137,15 +144,14 @@ public class AiPromptExecutor {
             || lower.contains("keep mouse")
             || lower.contains("mouse fixed")
             || lower.contains("same mouse")
-            || lower.contains("do not move differently")
-            || lower.contains("don't move differently");
+            || lower.contains("lock mouse");
     }
 
     private List<ActionFrame> parseActionSequence(String json) {
         try {
             String cleaned = extractJson(json);
             JsonObject root = JsonParser.parseString(cleaned).getAsJsonObject();
-            var actionsArr = root.getAsJsonArray("actions");
+            JsonArray actionsArr = root.getAsJsonArray("actions");
             if (actionsArr == null) return null;
 
             List<ActionFrame> frames = new ArrayList<>();
@@ -154,7 +160,7 @@ public class AiPromptExecutor {
                 String type = action.get("type").getAsString().toLowerCase();
                 frames.addAll(buildFrames(type, action));
             }
-            return frames;
+            return frames.isEmpty() ? null : frames;
         } catch (Exception e) {
             AiMod.LOGGER.error("Failed to parse action JSON: {}", e.getMessage());
             return null;
@@ -167,34 +173,80 @@ public class AiPromptExecutor {
         int times = action.has("times") ? action.get("times").getAsInt() : 1;
         int pauseBetween = action.has("pause_between") ? action.get("pause_between").getAsInt() : 5;
 
+        // Clamp to sane values
+        ticks = Math.max(1, Math.min(ticks, 2400));
+        times = Math.max(1, Math.min(times, 50));
+        pauseBetween = Math.max(1, Math.min(pauseBetween, 100));
+
         switch (type) {
-            case "move_forward" -> { ActionFrame f = new ActionFrame(); f.forward = true; f.tickDuration = ticks; result.add(f); }
-            case "move_backward" -> { ActionFrame f = new ActionFrame(); f.backward = true; f.tickDuration = ticks; result.add(f); }
-            case "strafe_left" -> { ActionFrame f = new ActionFrame(); f.left = true; f.tickDuration = ticks; result.add(f); }
-            case "strafe_right" -> { ActionFrame f = new ActionFrame(); f.right = true; f.tickDuration = ticks; result.add(f); }
-            case "sprint_forward" -> { ActionFrame f = new ActionFrame(); f.forward = true; f.sprinting = true; f.tickDuration = ticks; result.add(f); }
-            case "jump" -> { ActionFrame f = new ActionFrame(); f.jumping = true; f.tickDuration = ticks; result.add(f); }
-            case "crouch" -> { ActionFrame f = new ActionFrame(); f.sneaking = true; f.tickDuration = ticks; result.add(f); }
-            case "wait" -> { ActionFrame f = new ActionFrame(); f.tickDuration = ticks; result.add(f); }
+            case "move_forward" -> {
+                ActionFrame f = new ActionFrame();
+                f.forward = true; f.tickDuration = ticks; result.add(f);
+            }
+            case "move_backward" -> {
+                ActionFrame f = new ActionFrame();
+                f.backward = true; f.tickDuration = ticks; result.add(f);
+            }
+            case "strafe_left" -> {
+                ActionFrame f = new ActionFrame();
+                f.left = true; f.tickDuration = ticks; result.add(f);
+            }
+            case "strafe_right" -> {
+                ActionFrame f = new ActionFrame();
+                f.right = true; f.tickDuration = ticks; result.add(f);
+            }
+            case "sprint_forward" -> {
+                ActionFrame f = new ActionFrame();
+                f.forward = true; f.sprinting = true; f.tickDuration = ticks; result.add(f);
+            }
+            case "sprint_jump" -> {
+                ActionFrame f = new ActionFrame();
+                f.forward = true; f.sprinting = true; f.jumping = true; f.tickDuration = ticks; result.add(f);
+            }
+            case "jump" -> {
+                ActionFrame f = new ActionFrame();
+                f.jumping = true; f.tickDuration = ticks; result.add(f);
+            }
+            case "crouch" -> {
+                ActionFrame f = new ActionFrame();
+                f.sneaking = true; f.tickDuration = ticks; result.add(f);
+            }
+            case "wait" -> {
+                ActionFrame f = new ActionFrame();
+                f.tickDuration = ticks; result.add(f);
+            }
             case "attack" -> {
                 for (int i = 0; i < times; i++) {
-                    ActionFrame a = new ActionFrame(); a.attacking = true; a.tickDuration = 2; result.add(a);
-                    ActionFrame p = new ActionFrame(); p.tickDuration = pauseBetween; result.add(p);
+                    ActionFrame a = new ActionFrame();
+                    a.attacking = true; a.tickDuration = 2; result.add(a);
+                    ActionFrame p = new ActionFrame();
+                    p.tickDuration = pauseBetween; result.add(p);
                 }
             }
             case "use" -> {
                 for (int i = 0; i < times; i++) {
-                    ActionFrame u = new ActionFrame(); u.using = true; u.tickDuration = 2; result.add(u);
-                    ActionFrame p = new ActionFrame(); p.tickDuration = pauseBetween; result.add(p);
+                    ActionFrame u = new ActionFrame();
+                    u.using = true; u.tickDuration = 2; result.add(u);
+                    ActionFrame p = new ActionFrame();
+                    p.tickDuration = pauseBetween; result.add(p);
                 }
             }
             case "look" -> {
                 ActionFrame f = new ActionFrame();
                 f.yaw = action.has("yaw_offset") ? action.get("yaw_offset").getAsFloat() : 0f;
                 f.pitch = action.has("pitch") ? action.get("pitch").getAsFloat() : 0f;
-                f.tickDuration = ticks;
-                result.add(f);
+                f.tickDuration = ticks; result.add(f);
             }
+            case "circle_strafe" -> {
+                // Approximate circle strafe as alternating forward+strafe movements
+                String dir = action.has("direction") ? action.get("direction").getAsString() : "left";
+                int radiusTicks = action.has("radius_ticks") ? action.get("radius_ticks").getAsInt() : 40;
+                boolean goLeft = "left".equalsIgnoreCase(dir);
+                ActionFrame f1 = new ActionFrame();
+                f1.forward = true; f1.sprinting = true; f1.left = goLeft; f1.right = !goLeft;
+                f1.tickDuration = radiusTicks; result.add(f1);
+            }
+            default -> AiMod.LOGGER.warn("Unknown action type: {}", type);
         }
         return result;
     }
@@ -202,7 +254,7 @@ public class AiPromptExecutor {
     private String extractJson(String text) {
         int start = text.indexOf('{');
         int end = text.lastIndexOf('}');
-        if (start == -1 || end == -1) return text;
+        if (start == -1 || end == -1 || end < start) return text;
         return text.substring(start, end + 1);
     }
 

@@ -21,10 +21,9 @@ public class MovementPlayback {
     private boolean looping = true;
     private int loopCount = 0;
 
-    // Mouse variation flags
     private boolean mouseLocked = false;
 
-    // Per-loop variation (recalculated each loop)
+    // Per-loop variation
     private float yawVariation = 0f;
     private float pitchVariation = 0f;
     private float timingDriftFactor = 1.0f;
@@ -37,13 +36,20 @@ public class MovementPlayback {
     private int extraPauseTicks = 0;
     private int variationRefreshTimer = 0;
 
+    // Anti-pattern: track how many loops since a "human break"
+    private int loopsSinceBreak = 0;
+    private static final int MAX_LOOPS_BEFORE_BREAK = 12;
+    private boolean takingBreak = false;
+    private int breakDurationTicks = 0;
+
     // Teleport detection
     private Vec3d lastPosition = null;
-    private static final double TELEPORT_THRESHOLD_SQ = 64.0; // 8 blocks squared
+    private static final double TELEPORT_THRESHOLD_SQ = 64.0;
     private boolean scanning = false;
     private float scanYaw = 0f;
     private int scanDirection = 1;
     private int scanTimer = 0;
+    private Vec3d teleportOrigin = null;
 
     private static final Random RANDOM = new Random();
 
@@ -53,9 +59,11 @@ public class MovementPlayback {
         this.currentFrameIndex = 0;
         this.currentFrameTick = 0;
         this.loopCount = 0;
+        this.loopsSinceBreak = 0;
         this.playing = true;
         this.paused = false;
         this.scanning = false;
+        this.takingBreak = false;
         this.lastPosition = null;
         refreshVariation();
         AiMod.LOGGER.info("Playback started: {} frames, loop={}", frames.size(), loop);
@@ -71,6 +79,7 @@ public class MovementPlayback {
         playing = false;
         paused = false;
         scanning = false;
+        takingBreak = false;
         releaseAllKeys();
         AiMod.LOGGER.info("Playback stopped after {} loops.", loopCount);
 
@@ -100,29 +109,39 @@ public class MovementPlayback {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return;
 
-        // --- Teleport detection ---
+        // Teleport detection
         Vec3d pos = new Vec3d(client.player.getX(), client.player.getY(), client.player.getZ());
         if (lastPosition != null && !paused && !scanning) {
             double distSq = pos.squaredDistanceTo(lastPosition);
             if (distSq > TELEPORT_THRESHOLD_SQ) {
-                AiMod.LOGGER.warn("Teleport detected! Stopping playback and entering scan mode.");
+                AiMod.LOGGER.warn("Teleport detected! Entering scan mode.");
+                teleportOrigin = pos;
                 releaseAllKeys();
                 scanning = true;
                 scanYaw = client.player.getYaw();
                 scanTimer = 0;
                 client.player.sendMessage(
-                    Text.literal("[AI] Teleported! Scanning... Press [P] to resume playback."), true);
+                    Text.literal("[AI] Teleported — scanning environment. Press [P] to resume."), true);
             }
         }
         lastPosition = pos;
 
-        // --- Scan mode ---
         if (scanning) {
             tickScan(client);
             return;
         }
 
-        if (paused) {
+        if (paused) return;
+
+        // Human break simulation (occasional longer pause between loops)
+        if (takingBreak) {
+            breakDurationTicks--;
+            releaseAllKeys();
+            if (breakDurationTicks <= 0) {
+                takingBreak = false;
+                loopsSinceBreak = 0;
+                AiMod.LOGGER.info("Break over, resuming playback");
+            }
             return;
         }
 
@@ -133,20 +152,19 @@ public class MovementPlayback {
         }
 
         variationRefreshTimer--;
-        if (variationRefreshTimer <= 0) {
-            refreshVariation();
-        }
+        if (variationRefreshTimer <= 0) refreshVariation();
 
         noiseRefreshTimer--;
         if (noiseRefreshTimer <= 0) {
             if (!mouseLocked) {
-                yawNoise = (RANDOM.nextFloat() - 0.5f) * 0.8f;
-                pitchNoise = (RANDOM.nextFloat() - 0.5f) * 0.4f;
+                // Use Gaussian noise for more natural micro-movement
+                yawNoise = (float) (RANDOM.nextGaussian() * 0.35f);
+                pitchNoise = (float) (RANDOM.nextGaussian() * 0.18f);
             } else {
                 yawNoise = 0f;
                 pitchNoise = 0f;
             }
-            noiseRefreshTimer = 3 + RANDOM.nextInt(5);
+            noiseRefreshTimer = 3 + RANDOM.nextInt(6);
         }
 
         ActionFrame frame = frames.get(currentFrameIndex);
@@ -161,20 +179,41 @@ public class MovementPlayback {
             currentFrameTick = 0;
             currentFrameIndex++;
 
-            if (!mouseLocked && RANDOM.nextInt(100) < 3) {
-                extraPauseTicks = RANDOM.nextInt(3) + 1;
+            // Occasional micro-pause mid-sequence (simulates brief hesitation)
+            if (!mouseLocked && RANDOM.nextInt(120) < 3) {
+                extraPauseTicks = RANDOM.nextInt(4) + 1;
             }
 
             if (currentFrameIndex >= frames.size()) {
                 loopCount++;
+                loopsSinceBreak++;
+
                 if (looping) {
                     currentFrameIndex = 0;
                     refreshVariation();
-                    extraPauseTicks = 5 + RANDOM.nextInt(20);
+
+                    // Natural loop gap (0.25–1 second)
+                    extraPauseTicks = 5 + RANDOM.nextInt(15);
+
+                    // Periodic human-like break every N loops
+                    if (loopsSinceBreak >= MAX_LOOPS_BEFORE_BREAK && RANDOM.nextFloat() < 0.5f) {
+                        startHumanBreak(client);
+                    }
                 } else {
                     stop();
                 }
             }
+        }
+    }
+
+    private void startHumanBreak(MinecraftClient client) {
+        takingBreak = true;
+        // Break length: 3–12 seconds
+        breakDurationTicks = 60 + RANDOM.nextInt(180);
+        AiMod.LOGGER.info("Taking human-like break for {} ticks", breakDurationTicks);
+
+        if (client.player != null && com.aibot.mod.config.ModConfig.debugMode) {
+            client.player.sendMessage(Text.literal("[AI] Taking a short break..."), true);
         }
     }
 
@@ -184,11 +223,13 @@ public class MovementPlayback {
 
         scanTimer++;
 
-        // Sweep yaw back and forth slowly, bob pitch slightly
-        scanYaw += scanDirection * 0.8f;
-        float pitch = (float)(Math.sin(scanTimer * 0.05) * 15.0);
+        // Sweep yaw smoothly, bob pitch slightly — looks like someone looking around confused
+        scanYaw += scanDirection * 0.6f + (RANDOM.nextFloat() - 0.5f) * 0.2f;
+        float pitch = (float) (Math.sin(scanTimer * 0.04) * 18.0);
 
-        if (Math.abs(scanYaw - player.getYaw()) > 60f) {
+        // Reverse direction after sweeping far enough
+        float yawDiff = Math.abs(scanYaw - player.getYaw());
+        if (yawDiff > 55f) {
             scanDirection *= -1;
         }
 
@@ -198,6 +239,7 @@ public class MovementPlayback {
 
     public void stopScan() {
         scanning = false;
+        teleportOrigin = null;
     }
 
     private void applyFrame(MinecraftClient client, ActionFrame frame) {
@@ -210,7 +252,12 @@ public class MovementPlayback {
         client.options.rightKey.setPressed(frame.right);
         client.options.jumpKey.setPressed(frame.jumping);
         client.options.sneakKey.setPressed(frame.sneaking);
-        client.options.sprintKey.setPressed(frame.sprinting || (frame.forward && !frame.sneaking && RANDOM.nextFloat() < 0.95f));
+
+        // Sprint with high probability when moving forward and not sneaking
+        boolean shouldSprint = frame.sprinting
+                || (frame.forward && !frame.sneaking && RANDOM.nextFloat() < 0.93f);
+        client.options.sprintKey.setPressed(shouldSprint);
+
         client.options.attackKey.setPressed(frame.attacking);
         client.options.useKey.setPressed(frame.using);
 
@@ -227,15 +274,17 @@ public class MovementPlayback {
 
     private void refreshVariation() {
         if (!mouseLocked) {
-            yawVariation = (RANDOM.nextFloat() - 0.5f) * 10f;
-            pitchVariation = (RANDOM.nextFloat() - 0.5f) * 5f;
-            timingDriftFactor = 0.90f + RANDOM.nextFloat() * 0.20f;
+            // Gaussian variation for more natural distribution
+            yawVariation = (float) (RANDOM.nextGaussian() * 4.5f);
+            pitchVariation = (float) (RANDOM.nextGaussian() * 2.5f);
+            // Timing drift: ±12% of original speed
+            timingDriftFactor = 0.88f + RANDOM.nextFloat() * 0.24f;
         } else {
             yawVariation = 0f;
             pitchVariation = 0f;
             timingDriftFactor = 1.0f;
         }
-        variationRefreshTimer = 60 + RANDOM.nextInt(80);
+        variationRefreshTimer = 50 + RANDOM.nextInt(90);
     }
 
     private void releaseAllKeys() {
@@ -258,4 +307,5 @@ public class MovementPlayback {
     public int getLoopCount() { return loopCount; }
     public int getCurrentFrame() { return currentFrameIndex; }
     public int getTotalFrames() { return frames != null ? frames.size() : 0; }
+    public boolean isTakingBreak() { return takingBreak; }
 }

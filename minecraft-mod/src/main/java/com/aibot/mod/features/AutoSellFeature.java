@@ -1,6 +1,7 @@
 package com.aibot.mod.features;
 
 import com.aibot.mod.AiMod;
+import com.aibot.mod.config.ModConfig;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
@@ -15,26 +16,37 @@ import java.util.*;
 
 @Environment(EnvType.CLIENT)
 public class AutoSellFeature {
-    private static final int INVENTORY_FULL_THRESHOLD = 32;
     private static final int SELL_COOLDOWN_TICKS = 600;
-    private static final int GUI_WAIT_TICKS = 15;
+    private static final int GUI_WAIT_TICKS = 20;
 
     private int sellCooldown = 0;
     private boolean active = true;
     private boolean waitingForGui = false;
     private int guiWaitTimer = 0;
+    private int sellAttemptCount = 0;
 
-    private String preferredSellCommand = "/sell all";
+    // Multiple sell command fallbacks to try in sequence
+    private static final String[] SELL_COMMANDS = {
+        "/sell all", "/sellall", "/sell hand", "/shop sellall",
+        "/market sellall", "/ah sell all", "/trade sell"
+    };
+    private int sellCommandIndex = 0;
 
     private static final List<String> SELL_BUTTON_NAMES = List.of(
             "sell all", "sell items", "sell all items", "confirm sale",
             "confirm", "yes", "accept", "ok", "sell", "click to sell",
             "sell everything", "confirm sell", "sell all fish",
-            "sell all drops", "complete sale", "proceed"
+            "sell all drops", "complete sale", "proceed", "sell now",
+            "quick sell", "auto sell", "bulk sell", "instant sell"
     );
 
     private static final Set<Item> FISH_ITEMS = new HashSet<>();
     private static final Set<Item> MOB_DROP_ITEMS = new HashSet<>();
+    private static final Set<Item> CROP_ITEMS = new HashSet<>();
+    private static final Set<Item> ORE_ITEMS = new HashSet<>();
+
+    // Session stats
+    private int totalSellCount = 0;
 
     static {
         FISH_ITEMS.add(Items.COD);
@@ -66,19 +78,42 @@ public class AutoSellFeature {
         MOB_DROP_ITEMS.add(Items.CREEPER_HEAD);
         MOB_DROP_ITEMS.add(Items.PIGLIN_HEAD);
         MOB_DROP_ITEMS.add(Items.DRAGON_HEAD);
+        MOB_DROP_ITEMS.add(Items.BONE_MEAL);
+        MOB_DROP_ITEMS.add(Items.ARROW);
+        MOB_DROP_ITEMS.add(Items.TIPPED_ARROW);
+        MOB_DROP_ITEMS.add(Items.SPECTRAL_ARROW);
+
+        CROP_ITEMS.add(Items.WHEAT);
+        CROP_ITEMS.add(Items.CARROT);
+        CROP_ITEMS.add(Items.POTATO);
+        CROP_ITEMS.add(Items.BEETROOT);
+        CROP_ITEMS.add(Items.MELON_SLICE);
+        CROP_ITEMS.add(Items.PUMPKIN);
+        CROP_ITEMS.add(Items.SUGAR_CANE);
+        CROP_ITEMS.add(Items.COCOA_BEANS);
+        CROP_ITEMS.add(Items.NETHER_WART);
+
+        ORE_ITEMS.add(Items.IRON_INGOT);
+        ORE_ITEMS.add(Items.GOLD_INGOT);
+        ORE_ITEMS.add(Items.DIAMOND);
+        ORE_ITEMS.add(Items.EMERALD);
+        ORE_ITEMS.add(Items.COAL);
+        ORE_ITEMS.add(Items.LAPIS_LAZULI);
+        ORE_ITEMS.add(Items.REDSTONE);
+        ORE_ITEMS.add(Items.QUARTZ);
+        ORE_ITEMS.add(Items.RAW_IRON);
+        ORE_ITEMS.add(Items.RAW_GOLD);
+        ORE_ITEMS.add(Items.RAW_COPPER);
+        ORE_ITEMS.add(Items.AMETHYST_SHARD);
     }
 
-    public void setActive(boolean active) {
-        this.active = active;
-    }
-
-    public boolean isActive() {
-        return active;
-    }
+    public void setActive(boolean active) { this.active = active; }
+    public boolean isActive() { return active; }
 
     public void setSellCommand(String command) {
-        this.preferredSellCommand = command;
-        AiMod.LOGGER.info("Sell command set to: {}", command);
+        SELL_COMMANDS[0] = command;
+        sellCommandIndex = 0;
+        AiMod.LOGGER.info("Primary sell command set to: {}", command);
     }
 
     public void tick() {
@@ -99,30 +134,49 @@ public class AutoSellFeature {
 
         ClientPlayerEntity player = client.player;
         int filledSlots = countFilledSlots(player);
+        int threshold = ModConfig.sellInventoryThreshold;
 
-        if (filledSlots >= INVENTORY_FULL_THRESHOLD && hasSellableItems(player)) {
-            AiMod.LOGGER.info("Inventory full ({} slots), selling items...", filledSlots);
-            attemptSell(client, player);
+        if (filledSlots >= threshold && hasSellableItems(player)) {
+            int sellableCount = countSellableItems(player);
+            AiMod.LOGGER.info("Inventory threshold reached ({}/{} slots, {} sellable items) — selling",
+                    filledSlots, 36, sellableCount);
+            attemptSell(client, player, sellableCount);
         }
     }
 
     private void handleGuiWait(MinecraftClient client) {
         guiWaitTimer--;
 
-        if (guiWaitTimer <= 0) {
-            waitingForGui = false;
-        }
-
         Screen currentScreen = client.currentScreen;
         if (currentScreen instanceof HandledScreen<?> handledScreen) {
-            AiMod.LOGGER.info("GUI detected after sell command: {}", currentScreen.getTitle().getString());
+            AiMod.LOGGER.info("GUI open after sell command: {}", currentScreen.getTitle().getString());
             boolean clicked = tryClickSellButton(client, handledScreen);
-            if (!clicked) {
-                AiMod.LOGGER.info("No sell button found in GUI, closing screen.");
+            if (clicked) {
+                totalSellCount++;
+                sellAttemptCount = 0; // Reset fallback counter on success
+            } else {
+                AiMod.LOGGER.info("No sell button found — closing screen");
                 client.execute(() -> client.setScreen(null));
             }
             waitingForGui = false;
             sellCooldown = SELL_COOLDOWN_TICKS;
+            return;
+        }
+
+        if (guiWaitTimer <= 0) {
+            waitingForGui = false;
+            // Try next fallback command if this one didn't open a GUI
+            if (sellAttemptCount < SELL_COMMANDS.length - 1) {
+                sellAttemptCount++;
+                sellCommandIndex = sellAttemptCount % SELL_COMMANDS.length;
+                AiMod.LOGGER.info("Sell command didn't open GUI, trying: {}", SELL_COMMANDS[sellCommandIndex]);
+                sendCommand(client, SELL_COMMANDS[sellCommandIndex]);
+                waitingForGui = true;
+                guiWaitTimer = GUI_WAIT_TICKS;
+            } else {
+                sellCooldown = SELL_COOLDOWN_TICKS;
+                sellAttemptCount = 0;
+            }
         }
     }
 
@@ -136,7 +190,6 @@ public class AutoSellFeature {
             if (stack.isEmpty()) continue;
 
             String itemName = stack.getName().getString().toLowerCase();
-
             for (String keyword : SELL_BUTTON_NAMES) {
                 if (itemName.contains(keyword)) {
                     candidates.add(i);
@@ -145,14 +198,14 @@ public class AutoSellFeature {
             }
 
             if (hasLoreKeyword(stack)) {
-                candidates.add(i);
+                if (!candidates.contains(i)) candidates.add(i);
             }
         }
 
         if (candidates.isEmpty()) return false;
 
         int bestSlot = pickBestSlot(handler, candidates);
-        AiMod.LOGGER.info("Clicking sell button at slot {} ({})",
+        AiMod.LOGGER.info("Clicking sell button at slot {} ('{}')",
                 bestSlot, handler.slots.get(bestSlot).getStack().getName().getString());
 
         client.interactionManager.clickSlot(
@@ -164,7 +217,6 @@ public class AutoSellFeature {
     private boolean hasLoreKeyword(ItemStack stack) {
         var lore = stack.get(net.minecraft.component.DataComponentTypes.LORE);
         if (lore == null) return false;
-
         for (Text line : lore.lines()) {
             String text = line.getString().toLowerCase();
             for (String keyword : SELL_BUTTON_NAMES) {
@@ -175,25 +227,25 @@ public class AutoSellFeature {
     }
 
     private int pickBestSlot(net.minecraft.screen.ScreenHandler handler, List<Integer> candidates) {
-        String[] priority = {"sell all", "sell everything", "sell items", "confirm", "yes", "ok"};
-
+        String[] priority = {"sell all", "sell everything", "sell items", "quick sell",
+                "auto sell", "confirm", "yes", "ok", "sell"};
         for (String keyword : priority) {
             for (int slotIdx : candidates) {
                 String name = handler.slots.get(slotIdx).getStack().getName().getString().toLowerCase();
                 if (name.contains(keyword)) return slotIdx;
             }
         }
-
         return candidates.get(0);
     }
 
-    private void attemptSell(MinecraftClient client, ClientPlayerEntity player) {
-        sendCommand(client, preferredSellCommand);
+    private void attemptSell(MinecraftClient client, ClientPlayerEntity player, int sellableCount) {
+        String command = SELL_COMMANDS[sellCommandIndex % SELL_COMMANDS.length];
+        sendCommand(client, command);
         waitingForGui = true;
         guiWaitTimer = GUI_WAIT_TICKS;
 
-        player.sendMessage(Text.literal("[AI] Inventory full — selling items..."), true);
-        AiMod.LOGGER.info("Sent sell command: {}", preferredSellCommand);
+        player.sendMessage(Text.literal("[AI] Selling " + sellableCount + " items (" + command + ")..."), true);
+        AiMod.LOGGER.info("Sent sell command: {}", command);
     }
 
     private void sendCommand(MinecraftClient client, String command) {
@@ -209,12 +261,14 @@ public class AutoSellFeature {
     private boolean hasSellableItems(ClientPlayerEntity player) {
         for (int i = 0; i < player.getInventory().size(); i++) {
             ItemStack stack = player.getInventory().getStack(i);
-            if (!stack.isEmpty()) {
-                Item item = stack.getItem();
-                if (FISH_ITEMS.contains(item) || MOB_DROP_ITEMS.contains(item)) return true;
-            }
+            if (!stack.isEmpty() && isSellable(stack.getItem())) return true;
         }
         return false;
+    }
+
+    private boolean isSellable(Item item) {
+        return FISH_ITEMS.contains(item) || MOB_DROP_ITEMS.contains(item)
+                || CROP_ITEMS.contains(item) || ORE_ITEMS.contains(item);
     }
 
     private int countFilledSlots(ClientPlayerEntity player) {
@@ -229,13 +283,12 @@ public class AutoSellFeature {
         int count = 0;
         for (int i = 0; i < player.getInventory().size(); i++) {
             ItemStack stack = player.getInventory().getStack(i);
-            if (!stack.isEmpty()) {
-                Item item = stack.getItem();
-                if (FISH_ITEMS.contains(item) || MOB_DROP_ITEMS.contains(item)) {
-                    count += stack.getCount();
-                }
+            if (!stack.isEmpty() && isSellable(stack.getItem())) {
+                count += stack.getCount();
             }
         }
         return count;
     }
+
+    public int getTotalSellCount() { return totalSellCount; }
 }

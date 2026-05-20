@@ -25,10 +25,16 @@ public class MovementRecorder {
     private final List<ActionFrame> frames = new ArrayList<>();
     private String recordingName = "last";
 
+    // Track recording stats
+    private long recordingStartTime = 0;
+    private int rawFrameCount = 0;
+
     public void startRecording(String name) {
         frames.clear();
         recordingName = name;
         recording = true;
+        rawFrameCount = 0;
+        recordingStartTime = System.currentTimeMillis();
         AiMod.LOGGER.info("Recording started: {}", name);
 
         MinecraftClient client = MinecraftClient.getInstance();
@@ -40,6 +46,7 @@ public class MovementRecorder {
     public void stopRecording() {
         if (!recording) return;
         recording = false;
+        long durationMs = System.currentTimeMillis() - recordingStartTime;
 
         MinecraftClient client = MinecraftClient.getInstance();
 
@@ -50,14 +57,20 @@ public class MovementRecorder {
             return;
         }
 
+        int before = frames.size();
         compressFrames();
+        int after = frames.size();
+        float compressionRatio = before > 0 ? (float) after / before * 100f : 100f;
+
         save(recordingName);
-        AiMod.LOGGER.info("Recording stopped: {} frames saved as '{}'", frames.size(), recordingName);
+        AiMod.LOGGER.info("Recording '{}': {}ms, {} raw frames -> {} compressed ({} %)",
+                recordingName, durationMs, before, after, String.format("%.0f", compressionRatio));
 
         if (client.player != null) {
-            client.player.sendMessage(
-                Text.literal("[AI] Saved " + frames.size() + " frames as '" + recordingName + "'."), true
-            );
+            client.player.sendMessage(Text.literal(String.format(
+                "[AI] Saved '%s': %d frames (%.1fs, %.0f%% compressed).",
+                recordingName, after, durationMs / 1000.0, compressionRatio
+            )), true);
         }
     }
 
@@ -82,17 +95,20 @@ public class MovementRecorder {
         frame.yaw = player.getYaw();
         frame.pitch = player.getPitch();
 
+        rawFrameCount++;
         frames.add(frame);
     }
 
     private void compressFrames() {
         if (frames.size() < 2) return;
+
         List<ActionFrame> compressed = new ArrayList<>();
-        ActionFrame current = frames.get(0);
+        ActionFrame current = frames.get(0).copy();
 
         for (int i = 1; i < frames.size(); i++) {
             ActionFrame next = frames.get(i);
-            if (framesEqual(current, next) && current.tickDuration < 20) {
+            // Allow longer runs (up to 40 ticks) for better compression
+            if (framesEqual(current, next) && current.tickDuration < 40) {
                 current.tickDuration++;
             } else {
                 compressed.add(current);
@@ -100,6 +116,7 @@ public class MovementRecorder {
             }
         }
         compressed.add(current);
+
         frames.clear();
         frames.addAll(compressed);
     }
@@ -110,8 +127,8 @@ public class MovementRecorder {
                 && a.jumping == b.jumping && a.sneaking == b.sneaking
                 && a.sprinting == b.sprinting && a.attacking == b.attacking
                 && a.using == b.using
-                && Math.abs(a.yaw - b.yaw) < 1.0f
-                && Math.abs(a.pitch - b.pitch) < 1.0f;
+                && Math.abs(a.yaw - b.yaw) < 1.2f
+                && Math.abs(a.pitch - b.pitch) < 1.2f;
     }
 
     public void save(String name) {
@@ -119,9 +136,9 @@ public class MovementRecorder {
             Files.createDirectories(RECORDINGS_DIR);
             Path file = RECORDINGS_DIR.resolve(sanitize(name) + ".json");
             Files.writeString(file, GSON.toJson(frames));
-            AiMod.LOGGER.info("Saved recording to {}", file);
+            AiMod.LOGGER.info("Saved recording '{}' to {}", name, file);
         } catch (IOException e) {
-            AiMod.LOGGER.error("Failed to save recording", e);
+            AiMod.LOGGER.error("Failed to save recording '{}'", name, e);
         }
     }
 
@@ -139,9 +156,11 @@ public class MovementRecorder {
     public boolean delete(String name) {
         try {
             Path file = RECORDINGS_DIR.resolve(sanitize(name) + ".json");
-            return Files.deleteIfExists(file);
+            boolean deleted = Files.deleteIfExists(file);
+            if (deleted) AiMod.LOGGER.info("Deleted recording '{}'", name);
+            return deleted;
         } catch (IOException e) {
-            AiMod.LOGGER.error("Failed to delete recording: {}", name, e);
+            AiMod.LOGGER.error("Failed to delete recording '{}'", name, e);
             return false;
         }
     }
@@ -154,7 +173,7 @@ public class MovementRecorder {
             ActionFrame[] arr = GSON.fromJson(json, ActionFrame[].class);
             return arr != null ? new ArrayList<>(List.of(arr)) : null;
         } catch (IOException e) {
-            AiMod.LOGGER.error("Failed to load recording: {}", name, e);
+            AiMod.LOGGER.error("Failed to load recording '{}'", name, e);
             return null;
         }
     }
@@ -164,8 +183,8 @@ public class MovementRecorder {
     }
 
     public boolean isRecording() { return recording; }
-
     public String getRecordingName() { return recordingName; }
+    public int getRawFrameCount() { return rawFrameCount; }
 
     public List<String> listRecordings() {
         try {
@@ -178,6 +197,15 @@ public class MovementRecorder {
             return names;
         } catch (IOException e) {
             return new ArrayList<>();
+        }
+    }
+
+    public long getRecordingFileSizeBytes(String name) {
+        try {
+            Path file = RECORDINGS_DIR.resolve(sanitize(name) + ".json");
+            return Files.exists(file) ? Files.size(file) : 0;
+        } catch (IOException e) {
+            return 0;
         }
     }
 

@@ -3,6 +3,7 @@ package com.aibot.mod.features;
 import com.aibot.mod.AiMod;
 import com.aibot.mod.ai.LearnedResponseManager;
 import com.aibot.mod.ai.OllamaClient;
+import com.aibot.mod.config.ModConfig;
 import com.aibot.mod.gui.PromptScreen;
 import com.aibot.mod.gui.RecordingManagerScreen;
 import com.aibot.mod.keybind.ModKeyBindings;
@@ -32,6 +33,9 @@ public class FeatureManager {
 
     private boolean allActive = false;
 
+    // Anti-AFK ticker
+    private int antiAfkTimer = 0;
+
     public FeatureManager() {
         promptExecutor = new AiPromptExecutor(playback);
     }
@@ -49,8 +53,10 @@ public class FeatureManager {
         ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, receptionTimestamp) ->
                 onChatMessage(message));
 
-        OllamaClient.isAvailable();
-        AiMod.LOGGER.info("Feature manager initialized.");
+        // Check Ollama availability in background
+        new Thread(() -> OllamaClient.isAvailable()).start();
+
+        AiMod.LOGGER.info("Feature manager initialized. Keys: [K] fish, [L] attack, [;] all, [R] record, [P] play, [G] AI prompt, [J] recordings");
     }
 
     private void onClientTick(MinecraftClient client) {
@@ -64,19 +70,43 @@ public class FeatureManager {
         playerDetection.tick();
         recorder.tick();
         playback.tick();
+        chatHandler.tick();
+
+        // Anti-AFK: occasional subtle movement when idle
+        if (ModConfig.antiAfkEnabled && !autoFish.isActive() && !autoAttack.isActive()
+                && !playback.isPlaying()) {
+            tickAntiAfk(client);
+        }
+    }
+
+    private void tickAntiAfk(MinecraftClient client) {
+        antiAfkTimer++;
+        if (antiAfkTimer < ModConfig.antiAfkIntervalTicks) return;
+        antiAfkTimer = 0;
+
+        // Random subtle movement: small yaw rotation
+        if (client.player != null) {
+            float nudge = (float) (Math.random() - 0.5) * 8f;
+            client.execute(() -> {
+                if (client.player != null) {
+                    client.player.setYaw(client.player.getYaw() + nudge);
+                }
+            });
+            AiMod.LOGGER.debug("Anti-AFK nudge applied");
+        }
     }
 
     private void handleKeyBindings(MinecraftClient client) {
         while (ModKeyBindings.toggleFish.wasPressed()) {
             boolean newState = !autoFish.isActive();
             autoFish.setActive(newState);
-            sendActionBar(client, "Auto-Fish: " + (newState ? "ON" : "OFF"));
+            sendActionBar(client, "Auto-Fish: " + (newState ? "§aON" : "§cOFF"));
         }
 
         while (ModKeyBindings.toggleAttack.wasPressed()) {
             boolean newState = !autoAttack.isActive();
             autoAttack.setActive(newState);
-            sendActionBar(client, "Auto-Attack: " + (newState ? "ON" : "OFF"));
+            sendActionBar(client, "Auto-Attack: " + (newState ? "§aON" : "§cOFF"));
         }
 
         while (ModKeyBindings.toggleAll.wasPressed()) {
@@ -84,13 +114,12 @@ public class FeatureManager {
             autoFish.setActive(allActive);
             autoAttack.setActive(allActive);
             autoSell.setActive(allActive);
-            sendActionBar(client, "AI Mod: " + (allActive ? "ALL ON" : "ALL OFF"));
+            sendActionBar(client, "AI Mod: " + (allActive ? "§aALL ON" : "§cALL OFF"));
         }
 
         while (ModKeyBindings.toggleRecord.wasPressed()) {
             if (recorder.isRecording()) {
                 recorder.stopRecording();
-                // Auto-open prompt screen to name and describe the recording
                 if (client.currentScreen == null) {
                     client.setScreen(new PromptScreen(promptExecutor, recorder, true));
                 }
@@ -110,7 +139,7 @@ public class FeatureManager {
                     playback.setMouseLocked(false);
                     playback.start(frames, true);
                 } else {
-                    sendActionBar(client, "No recording found. Press [R] to record first.");
+                    sendActionBar(client, "No recording found — press [R] to record first.");
                 }
             }
         }
@@ -141,7 +170,7 @@ public class FeatureManager {
 
     private void sendActionBar(MinecraftClient client, String msg) {
         if (client.player != null) {
-            client.player.sendMessage(Text.literal("[AI] " + msg), true);
+            client.player.sendMessage(Text.literal("§7[AI] " + msg), true);
         }
     }
 
@@ -152,4 +181,5 @@ public class FeatureManager {
     public MovementRecorder getRecorder() { return recorder; }
     public MovementPlayback getPlayback() { return playback; }
     public AiPromptExecutor getPromptExecutor() { return promptExecutor; }
+    public PlayerDetectionFeature getPlayerDetection() { return playerDetection; }
 }
