@@ -1,0 +1,10 @@
+{
+  "key.categories.aimod": "AI Mod",
+
+  "key.aimod.toggle_fish": "Toggle Auto-Fish",
+  "key.aimod.toggle_attack": "Toggle Auto-Attack",
+  "key.aimod.toggle_all": "Toggle All Features",
+  "key.aimod.toggle_record": "Toggle Movement Recording",
+  "key.aimod.toggle_playback": "Toggle Movement Playback",
+  "key.aimod.open_prompt_gui": "Open AI Prompt"
+}
