@@ -20,6 +20,17 @@ An AI-powered automation mod using Ollama (local AI) for chat responses.
 | `K` | Toggle Auto-Fish |
 | `L` | Toggle Auto-Attack |
 | `;` | Toggle Everything ON/OFF |
+| `G` | Open AI Prompt GUI |
+| `R` | Toggle Recording (keybind registered, feature in progress) |
+| `P` | Toggle Playback (keybind registered, feature in progress) |
+
+### AI Prompt GUI (`G`)
+Press `G` in-game to open a prompt window with 8 text lines.
+- Type any prompt across the lines — they're joined together before being sent to Ollama
+- Press `Tab` to move between lines
+- Press `Enter` or click **Send to AI** to send the prompt
+- The AI response is typed into chat with realistic human delay
+- Press `Esc` or **Cancel** to close without sending
 
 ## Requirements
 

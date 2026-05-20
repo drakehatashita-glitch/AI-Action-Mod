@@ -11,6 +11,7 @@ public class ModKeyBindings {
     public static KeyBinding toggleAll;
     public static KeyBinding toggleRecord;
     public static KeyBinding togglePlayback;
+    public static KeyBinding openPromptGui;
 
     public static void register() {
         toggleFish = KeyBindingHelper.registerKeyBinding(new KeyBinding(
@@ -45,6 +46,13 @@ public class ModKeyBindings {
                 "key.aimod.toggle_playback",
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_P,
+                "key.categories.aimod"
+        ));
+
+        openPromptGui = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.aimod.open_prompt_gui",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_G,
                 "key.categories.aimod"
         ));
     }
