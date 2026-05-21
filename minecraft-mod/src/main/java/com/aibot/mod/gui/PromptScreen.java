@@ -125,30 +125,6 @@ public class PromptScreen extends Screen {
         setFocused(lines.get(index));
     }
 
-    @Override
-    public boolean keyPressed(net.minecraft.client.input.KeyInput key) {
-        int keyCode = key.getKeycode();
-        if (keyCode == 258) {
-            if (postRecording && nameField != null && nameField.isFocused()) {
-                nameField.setFocused(false);
-                focusLine(0);
-                return true;
-            }
-            for (int i = 0; i < lines.size(); i++) {
-                if (lines.get(i).isFocused()) { focusLine(i + 1); return true; }
-            }
-        }
-        if (keyCode == 257 || keyCode == 335) {
-            onSubmit();
-            return true;
-        }
-        if (keyCode == 256) {
-            close();
-            return true;
-        }
-        return super.keyPressed(key);
-    }
-
     private void onSubmit() {
         StringBuilder sb = new StringBuilder();
         for (TextFieldWidget f : lines) {
