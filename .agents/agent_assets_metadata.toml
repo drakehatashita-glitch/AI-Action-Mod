@@ -18,3 +18,9 @@ id = "7VQsDiR-AwaiayKvNHCgm"
 uri = "file://aimod-1.0.0.tar.gz"
 type = "unspecified"
 title = "AiMod 1.0.0 — Compiled Fabric Mod"
+
+[[outputs]]
+id = "VDa0w9lHe1VureCpn8rc9"
+uri = "file://AIMOD_GUIDE.md"
+type = "text"
+title = "AiMod — Full Setup & Usage Guide"
